@@ -97,6 +97,11 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((subcommand) =>
     subcommand
+      .setName("clean_recipients")
+      .setDescription("Clean up corrupted recipient data"),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
       .setName("edit_draw")
       .setDescription("Edit an existing draw")
       .addStringOption((option) => option.setName("draw_id").setDescription("ID of the draw to edit").setRequired(true))
@@ -198,6 +203,9 @@ export async function execute(interaction) {
         break
       case "remove_recipient":
         await handleRemoveRecipient(interaction, db)
+        break
+      case "clean_recipients":
+        await handleCleanRecipients(interaction, db)
         break
       case "edit_draw":
         await handleEditDraw(interaction, db)
@@ -684,6 +692,42 @@ async function handleRemoveRecipient(interaction, db) {
 
   await interaction.reply({ embeds: [embed] })
   logger.info(`Recipient removed: ${recipient} by ${interaction.user.tag}`)
+}
+
+async function handleCleanRecipients(interaction, db) {
+  if (!db.config) db.config = {}
+  if (!db.config.allowedRecipients) db.config.allowedRecipients = []
+
+  const originalCount = db.config.allowedRecipients.length
+  
+  // Clean up corrupted recipients (remove objects, keep only strings)
+  db.config.allowedRecipients = db.config.allowedRecipients.filter(recipient => {
+    return typeof recipient === 'string' && recipient.trim().length > 0
+  })
+
+  const cleanedCount = db.config.allowedRecipients.length
+  const removedCount = originalCount - cleanedCount
+
+  saveDatabase(interaction.guildId, db)
+
+  const embed = new EmbedBuilder()
+    .setTitle("🧹 Recipients Cleaned")
+    .setDescription("Cleaned up recipient list. Removed corrupted entries.")
+    .setColor(db.config?.theme?.success || "#4CAF50")
+    .addFields(
+      { name: "📊 Before", value: originalCount.toString(), inline: true },
+      { name: "📊 After", value: cleanedCount.toString(), inline: true },
+      { name: "🗑️ Removed", value: removedCount.toString(), inline: true },
+      {
+        name: "📋 Current Recipients",
+        value: db.config.allowedRecipients.map((r) => `• ${r}`).join("\n") || "None",
+        inline: false,
+      }
+    )
+    .setFooter({ text: "Powered By Aegisum Eco System" })
+
+  await interaction.reply({ embeds: [embed] })
+  logger.info(`Recipients cleaned: removed ${removedCount} invalid entries by ${interaction.user.tag}`)
 }
 
 async function handleEditDraw(interaction, db) {

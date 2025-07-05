@@ -27,14 +27,33 @@ async function handleTipccDonation(message) {
     let match = null
     let sender, amount, currency, recipient
 
-    // Pattern 1: Standard tip.cc format
-    const tipRegex1 = /💰\s*\*\*(.+?)\*\*\s*sent\s*\*\*(.+?)\s*(.+?)\*\*\s*to\s*\*\*(.+?)\*\*/i
+    // Pattern 1: Custom emoji format - <a:USDT:123> <@!123> sent <@123> 0.1000 USDT (≈ $0.10).
+    const tipRegex1 = /<[a:]*\w+:\d+>\s*<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*([\d.]+)\s*(\w+)/i
     match = message.content.match(tipRegex1)
+    
+    if (match) {
+      sender = match[1] // sender user ID
+      recipient = match[2] // recipient user ID  
+      amount = match[3]
+      currency = match[4]
+    }
 
     if (!match) {
-      // Pattern 2: Alternative format
-      const tipRegex2 = /(.+?)\s*sent\s*(.+?)\s*(.+?)\s*to\s*(.+)/i
+      // Pattern 2: Username format - username sent amount currency to recipient
+      const tipRegex2 = /(\w+)\s*sent\s*([\d.]+)\s*(\w+)\s*to\s*(\w+)/i
       match = message.content.match(tipRegex2)
+      if (match) {
+        [, sender, amount, currency, recipient] = match
+      }
+    }
+
+    if (!match) {
+      // Pattern 3: Standard tip.cc format with bold
+      const tipRegex3 = /💰\s*\*\*(.+?)\*\*\s*sent\s*\*\*(.+?)\s*(.+?)\*\*\s*to\s*\*\*(.+?)\*\*/i
+      match = message.content.match(tipRegex3)
+      if (match) {
+        [, sender, amount, currency, recipient] = match
+      }
     }
 
     if (!match) {
@@ -42,7 +61,6 @@ async function handleTipccDonation(message) {
       return
     }
 
-    [, sender, amount, currency, recipient] = match
     logger.info(`🔍 Detected tip: ${sender} sent ${amount} ${currency} to ${recipient}`)
 
     // Check if recipient is in allowed recipients
@@ -51,15 +69,38 @@ async function handleTipccDonation(message) {
       return
     }
 
-    // More flexible recipient matching
-    const cleanRecipient = recipient.replace(/[@<>]/g, '').toLowerCase()
-    const isAllowedRecipient = db.config.allowedRecipients.some((allowed) => {
-      const cleanAllowed = allowed.replace(/[@<>]/g, '').toLowerCase()
-      return cleanRecipient.includes(cleanAllowed) || cleanAllowed.includes(cleanRecipient)
+    // More flexible recipient matching - handle both user IDs and usernames
+    let isAllowedRecipient = false
+    
+    // If recipient is a user ID, try to get the username from the guild
+    let recipientToCheck = recipient
+    if (/^\d+$/.test(recipient)) {
+      // It's a user ID, try to get the member
+      try {
+        const member = await message.guild.members.fetch(recipient)
+        if (member) {
+          recipientToCheck = member.user.username
+          logger.debug(`🔍 Converted user ID ${recipient} to username: ${recipientToCheck}`)
+        }
+      } catch (error) {
+        logger.debug(`🔍 Could not fetch member for ID ${recipient}`)
+      }
+    }
+    
+    // Check against allowed recipients
+    const cleanRecipient = recipientToCheck.replace(/[@<>!]/g, '').toLowerCase()
+    logger.debug(`🔍 Checking recipient: ${cleanRecipient} against allowed list: ${JSON.stringify(db.config.allowedRecipients)}`)
+    
+    isAllowedRecipient = db.config.allowedRecipients.some((allowed) => {
+      if (typeof allowed !== 'string') return false
+      const cleanAllowed = allowed.replace(/[@<>!]/g, '').toLowerCase()
+      const matches = cleanRecipient.includes(cleanAllowed) || cleanAllowed.includes(cleanRecipient)
+      logger.debug(`🔍 Comparing "${cleanRecipient}" with "${cleanAllowed}": ${matches}`)
+      return matches
     })
 
     if (!isAllowedRecipient) {
-      logger.info(`🔍 Recipient ${recipient} not in allowed list`)
+      logger.info(`🔍 Recipient ${recipientToCheck} (${recipient}) not in allowed list: ${JSON.stringify(db.config.allowedRecipients)}`)
       return
     }
 
