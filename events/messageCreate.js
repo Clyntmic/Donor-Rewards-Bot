@@ -93,38 +93,27 @@ async function handleTipccDonation(message) {
       return
     }
 
-    // More flexible recipient matching - handle both user IDs and usernames
+    // Check if recipient is in allowed recipients - simplified approach
     let isAllowedRecipient = false
     
-    // If recipient is a user ID, try to get the username from the guild
-    let recipientToCheck = recipient
-    if (/^\d+$/.test(recipient)) {
-      // It's a user ID, try to get the member
-      try {
-        const member = await message.guild.members.fetch(recipient)
-        if (member) {
-          recipientToCheck = member.user.username
-          logger.debug(`🔍 Converted user ID ${recipient} to username: ${recipientToCheck}`)
-        }
-      } catch (error) {
-        logger.debug(`🔍 Could not fetch member for ID ${recipient}`)
-      }
-    }
+    logger.debug(`🔍 Checking recipient: ${recipient} against allowed list: ${JSON.stringify(db.config.allowedRecipients)}`)
     
-    // Check against allowed recipients
-    const cleanRecipient = recipientToCheck.replace(/[@<>!]/g, '').toLowerCase()
-    logger.debug(`🔍 Checking recipient: ${cleanRecipient} against allowed list: ${JSON.stringify(db.config.allowedRecipients)}`)
-    
+    // Check direct match with recipient ID
     isAllowedRecipient = db.config.allowedRecipients.some((allowed) => {
       if (typeof allowed !== 'string') return false
-      const cleanAllowed = allowed.replace(/[@<>!]/g, '').toLowerCase()
-      const matches = cleanRecipient.includes(cleanAllowed) || cleanAllowed.includes(cleanRecipient)
+      
+      // Clean both values
+      const cleanAllowed = allowed.replace(/[@<>!]/g, '')
+      const cleanRecipient = recipient.replace(/[@<>!]/g, '')
+      
+      // Check if they match
+      const matches = cleanAllowed === cleanRecipient
       logger.debug(`🔍 Comparing "${cleanRecipient}" with "${cleanAllowed}": ${matches}`)
       return matches
     })
 
     if (!isAllowedRecipient) {
-      logger.info(`🔍 Recipient ${recipientToCheck} (${recipient}) not in allowed list: ${JSON.stringify(db.config.allowedRecipients)}`)
+      logger.info(`🔍 Recipient ${recipient} not in allowed list: ${JSON.stringify(db.config.allowedRecipients)}`)
       return
     }
 

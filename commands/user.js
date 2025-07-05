@@ -379,7 +379,7 @@ async function handlePrivacy(interaction, db) {
   }
 
   const embed = new EmbedBuilder()
-    .setColor(CONFIG.DEFAULT_THEME.colors.primary)
+    .setColor(CONFIG.DEFAULT_THEME?.colors?.primary || "#3498db")
     .setTitle("🔒 Privacy Settings")
 
   if (setting === "view") {
