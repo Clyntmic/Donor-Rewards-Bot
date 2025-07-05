@@ -181,6 +181,41 @@ export const data = new SlashCommandBuilder()
         option.setName("currency").setDescription("Currency symbol (e.g., BTC, ETH)").setRequired(false),
       ),
   )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("fix_achievements")
+      .setDescription("Retroactively assign achievements to existing users")
+      .addUserOption((option) =>
+        option.setName("user").setDescription("Specific user to fix (optional)").setRequired(false),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("configure_donor_roles")
+      .setDescription("Configure donor roles and their requirements")
+      .addStringOption((option) =>
+        option
+          .setName("action")
+          .setDescription("Action to perform")
+          .setRequired(true)
+          .addChoices(
+            { name: "View Current", value: "view" },
+            { name: "Auto Setup", value: "auto_setup" },
+            { name: "Add Role", value: "add" },
+            { name: "Remove Role", value: "remove" },
+            { name: "Reset", value: "reset" },
+          ),
+      )
+      .addRoleOption((option) =>
+        option.setName("role").setDescription("Discord role to configure").setRequired(false),
+      )
+      .addNumberOption((option) =>
+        option.setName("min_amount").setDescription("Minimum donation amount in USD").setRequired(false),
+      )
+      .addNumberOption((option) =>
+        option.setName("max_amount").setDescription("Maximum donation amount in USD").setRequired(false),
+      ),
+  )
 
 export async function execute(interaction) {
   try {
@@ -238,6 +273,12 @@ export async function execute(interaction) {
         break
       case "cryptocurrencies":
         await handleCryptocurrencies(interaction, db)
+        break
+      case "fix_achievements":
+        await handleFixAchievements(interaction, db)
+        break
+      case "configure_donor_roles":
+        await handleConfigureDonorRoles(interaction, db)
         break
       default:
         await handleDashboard(interaction, db)
@@ -1080,6 +1121,237 @@ async function handleCryptocurrencies(interaction, db) {
 
   await interaction.reply({ embeds: [embed] })
   logger.info(`Cryptocurrency management: ${action} ${currency || ""} by ${interaction.user.tag}`)
+}
+
+async function handleFixAchievements(interaction, db) {
+  const targetUser = interaction.options.getUser("user")
+  const { ACHIEVEMENTS } = await import("../config.js")
+  
+  const embed = new EmbedBuilder()
+    .setColor("#00ff00")
+    .setTitle("🏆 Achievement Fix")
+    .setTimestamp()
+
+  let fixedCount = 0
+  let usersProcessed = 0
+
+  try {
+    // If specific user provided, fix only that user
+    if (targetUser) {
+      const userId = targetUser.id
+      if (db.users[userId]) {
+        const fixed = await fixUserAchievements(interaction.guild, db, userId, ACHIEVEMENTS)
+        fixedCount += fixed
+        usersProcessed = 1
+        
+        embed.setDescription(`Fixed achievements for ${targetUser.username}`)
+      } else {
+        embed.setColor("#ff0000").setDescription(`User ${targetUser.username} has no donation history.`)
+      }
+    } else {
+      // Fix all users
+      for (const [userId, userData] of Object.entries(db.users)) {
+        if (userData.totalDonated > 0) {
+          const fixed = await fixUserAchievements(interaction.guild, db, userId, ACHIEVEMENTS)
+          fixedCount += fixed
+          usersProcessed++
+        }
+      }
+      
+      embed.setDescription(`Processed ${usersProcessed} users with donation history`)
+    }
+
+    embed.addFields(
+      { name: "👥 Users Processed", value: usersProcessed.toString(), inline: true },
+      { name: "🏆 Achievements Fixed", value: fixedCount.toString(), inline: true }
+    )
+
+    saveDatabase(interaction.guildId, db)
+    
+  } catch (error) {
+    logger.error("Error fixing achievements:", error)
+    embed.setColor("#ff0000").setDescription("❌ Error occurred while fixing achievements")
+  }
+
+  await interaction.reply({ embeds: [embed] })
+  logger.info(`Achievement fix completed: ${fixedCount} achievements assigned to ${usersProcessed} users by ${interaction.user.tag}`)
+}
+
+async function fixUserAchievements(guild, db, userId, ACHIEVEMENTS) {
+  const userData = db.users[userId]
+  if (!userData.achievements) userData.achievements = []
+  
+  let fixedCount = 0
+  
+  for (const [key, achievement] of Object.entries(ACHIEVEMENTS)) {
+    // Skip if already earned
+    if (userData.achievements.includes(key)) continue
+    
+    let earned = false
+    
+    switch (key) {
+      case 'first_steps':
+        earned = userData.totalDonated > 0
+        break
+      case 'generous_donor':
+        earned = userData.totalDonated >= 100
+        break
+      case 'big_spender':
+        earned = userData.totalDonated >= 500
+        break
+      case 'whale':
+        earned = userData.totalDonated >= 1000
+        break
+      case 'streak_master':
+        earned = userData.streaks?.current >= 7
+        break
+      case 'community_pillar':
+        // Check referrals
+        const referralCount = Object.values(db.users).filter(user => user.referredBy === userId).length
+        earned = referralCount >= 3
+        break
+      case 'lucky_winner':
+        // Check if user has won any draws
+        earned = userData.wins > 0
+        break
+    }
+    
+    if (earned) {
+      userData.achievements.push(key)
+      fixedCount++
+      logger.info(`🏆 Fixed achievement: ${achievement.name} for user ${userId}`)
+    }
+  }
+  
+  return fixedCount
+}
+
+async function handleConfigureDonorRoles(interaction, db) {
+  const action = interaction.options.getString("action")
+  const role = interaction.options.getRole("role")
+  const minAmount = interaction.options.getNumber("min_amount")
+  const maxAmount = interaction.options.getNumber("max_amount")
+  
+  const embed = new EmbedBuilder()
+    .setColor("#3498db")
+    .setTitle("🎭 Donor Roles Configuration")
+    .setTimestamp()
+
+  // Initialize donor roles config if not exists
+  if (!db.config) db.config = {}
+  if (!db.config.donorRoles) db.config.donorRoles = {}
+
+  switch (action) {
+    case "view":
+      const roles = db.config.donorRoles
+      if (Object.keys(roles).length === 0) {
+        embed.setDescription("No donor roles configured yet. Use `auto_setup` to configure default roles.")
+      } else {
+        let rolesList = ""
+        for (const [roleId, roleData] of Object.entries(roles)) {
+          const discordRole = interaction.guild.roles.cache.get(roleId)
+          const roleName = discordRole ? discordRole.name : "Unknown Role"
+          rolesList += `**${roleName}** - $${roleData.minAmount}${roleData.maxAmount ? ` - $${roleData.maxAmount}` : "+"}\n`
+        }
+        embed.setDescription("Current donor roles configuration:")
+        embed.addFields({ name: "🎭 Configured Roles", value: rolesList || "None", inline: false })
+      }
+      break
+
+    case "auto_setup":
+      // Auto-setup based on existing roles in the server
+      const guild = interaction.guild
+      const donorRoleNames = [
+        { name: "bronze donor", min: 5, max: 25 },
+        { name: "silver donor", min: 26, max: 50 },
+        { name: "gold donor", min: 51, max: 100 },
+        { name: "platinum donor", min: 101, max: 250 },
+        { name: "diamond donor", min: 251, max: 500 },
+        { name: "onyx donor", min: 500, max: null }
+      ]
+
+      let setupCount = 0
+      let setupList = ""
+
+      for (const roleConfig of donorRoleNames) {
+        const foundRole = guild.roles.cache.find(r => 
+          r.name.toLowerCase().includes(roleConfig.name.toLowerCase())
+        )
+        
+        if (foundRole) {
+          db.config.donorRoles[foundRole.id] = {
+            name: foundRole.name,
+            minAmount: roleConfig.min,
+            maxAmount: roleConfig.max,
+            id: foundRole.id
+          }
+          setupCount++
+          setupList += `**${foundRole.name}** - $${roleConfig.min}${roleConfig.max ? ` - $${roleConfig.max}` : "+"}\n`
+        }
+      }
+
+      if (setupCount > 0) {
+        embed.setColor("#00ff00")
+        embed.setDescription(`Successfully auto-configured ${setupCount} donor roles!`)
+        embed.addFields({ name: "🎭 Configured Roles", value: setupList, inline: false })
+        saveDatabase(interaction.guildId, db)
+      } else {
+        embed.setColor("#ff9900")
+        embed.setDescription("No matching donor roles found. Create roles with names like 'Bronze Donor', 'Silver Donor', etc., then try again.")
+      }
+      break
+
+    case "add":
+      if (!role || minAmount === null) {
+        embed.setColor("#ff0000")
+        embed.setDescription("❌ Please provide both a role and minimum amount.")
+        break
+      }
+
+      db.config.donorRoles[role.id] = {
+        name: role.name,
+        minAmount: minAmount,
+        maxAmount: maxAmount,
+        id: role.id
+      }
+
+      embed.setColor("#00ff00")
+      embed.setDescription(`✅ Added donor role: **${role.name}** - $${minAmount}${maxAmount ? ` - $${maxAmount}` : "+"}`)
+      saveDatabase(interaction.guildId, db)
+      break
+
+    case "remove":
+      if (!role) {
+        embed.setColor("#ff0000")
+        embed.setDescription("❌ Please specify a role to remove.")
+        break
+      }
+
+      if (db.config.donorRoles[role.id]) {
+        delete db.config.donorRoles[role.id]
+        embed.setColor("#00ff00")
+        embed.setDescription(`✅ Removed donor role: **${role.name}**`)
+        saveDatabase(interaction.guildId, db)
+      } else {
+        embed.setColor("#ff9900")
+        embed.setDescription(`⚠️ Role **${role.name}** was not configured as a donor role.`)
+      }
+      break
+
+    case "reset":
+      db.config.donorRoles = {}
+      embed.setColor("#00ff00")
+      embed.setDescription("✅ All donor roles have been reset. Use `auto_setup` or `add` to configure new roles.")
+      saveDatabase(interaction.guildId, db)
+      break
+
+    default:
+      embed.setColor("#ff0000")
+      embed.setDescription("❌ Invalid action specified.")
+  }
+
+  await interaction.reply({ embeds: [embed] })
+  logger.info(`Donor roles configuration: ${action} by ${interaction.user.tag}`)
 }
 
 async function checkAdminPermissions(interaction, db) {

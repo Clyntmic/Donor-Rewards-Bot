@@ -137,14 +137,29 @@ async function handleTipccDonation(message) {
 
     logger.info(`🔍 USD value calculated: $${usdValue.toFixed(2)}`)
 
-    // Find sender in guild - try multiple methods
+    // Find sender in guild - handle both user IDs and usernames
     const guild = message.guild
-    let senderMember = guild.members.cache.find((member) =>
-      member.user.username.toLowerCase().includes(sender.toLowerCase())
-    )
+    let senderMember = null
 
+    // If sender is a user ID (all digits), fetch directly
+    if (/^\d+$/.test(sender)) {
+      try {
+        senderMember = await guild.members.fetch(sender)
+        logger.debug(`🔍 Found sender by ID: ${sender}`)
+      } catch (error) {
+        logger.debug(`🔍 Could not fetch member by ID ${sender}`)
+      }
+    }
+
+    // If not found by ID, try username matching
     if (!senderMember) {
-      // Try display name
+      senderMember = guild.members.cache.find((member) =>
+        member.user.username.toLowerCase().includes(sender.toLowerCase())
+      )
+    }
+
+    // Try display name as fallback
+    if (!senderMember) {
       senderMember = guild.members.cache.find((member) =>
         member.displayName.toLowerCase().includes(sender.toLowerCase())
       )
@@ -445,7 +460,15 @@ function updateDonationStreak(userData) {
 // Assign donor roles based on total donations
 async function assignDonorRoles(member, newTotal, oldTotal) {
   try {
-    const donorRoles = CONFIG.DONOR_ROLES
+    const serverId = member.guild.id
+    const db = getDatabase(serverId)
+    const donorRoles = db.config?.donorRoles || {}
+    
+    // Skip if no donor roles configured
+    if (Object.keys(donorRoles).length === 0) {
+      logger.debug("🎭 No donor roles configured, skipping role assignment")
+      return
+    }
     
     // Find current role the user has (check actual Discord roles)
     let currentRole = null
