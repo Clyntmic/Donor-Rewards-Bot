@@ -7,17 +7,21 @@ import fetch from "node-fetch"
 export const name = Events.MessageCreate
 
 export async function execute(message) {
-  if (message.author.bot) return
-
-  // Check for tip.cc donations
+  // Check for tip.cc donations first (before ignoring bot messages)
   if (message.author.id === "617037497574359050") {
     // tip.cc bot ID
     await handleTipccDonation(message)
+    return
   }
+
+  // Ignore other bot messages
+  if (message.author.bot) return
 }
 
 async function handleTipccDonation(message) {
   try {
+    logger.info(`🔍 Processing tip.cc message: "${message.content}"`)
+    
     const serverId = message.guildId
     if (!serverId) return
 
@@ -76,7 +80,8 @@ async function handleTipccDonation(message) {
     }
 
     if (!match) {
-      logger.debug(`🔍 No tip match found in message: ${message.content}`)
+      logger.info(`🔍 No tip match found in message: "${message.content}"`)
+      logger.debug(`🔍 Tried all 4 regex patterns but none matched`)
       return
     }
 
