@@ -1,7 +1,7 @@
 import { Events } from "discord.js"
 import { getDatabase, saveDatabase } from "../utils/database.js"
 import { logger } from "../utils/logger.js"
-import { CONFIG } from "../config.js"
+import { CONFIG, ACHIEVEMENTS } from "../config.js"
 import fetch from "node-fetch"
 
 export const name = Events.MessageCreate
@@ -264,11 +264,20 @@ async function handleTipccDonation(message) {
     saveDatabase(serverId, db)
     logger.info("✅ Donation processed successfully")
 
-    // Send confirmation
+    // Send enhanced confirmation message
     if (entriesAdded > 0) {
-      const confirmationMessage = `🎉 **${senderMember.user.username}** donated **$${usdValue.toFixed(
-        2,
-      )}** and received **${entriesAdded}** draw entries!\n\nUse \`/user entries\` to see your entries.`
+      // Create a beautiful confirmation message with user mention
+      const confirmationMessage = `🎉 **Thank you for your donation!** 🎉
+
+<@${senderMember.user.id}> just donated **$${usdValue.toFixed(2)}** and received **${entriesAdded}** draw entries!
+
+🎫 **Total Entries:** ${entriesAdded}
+💰 **Donation Amount:** $${usdValue.toFixed(2)}
+🏆 **Total Donated:** $${db.users[senderId].totalDonated.toFixed(2)}
+
+Use \`/user entries\` to see all your entries across draws!
+
+*Thank you for supporting our community!* ❤️`
 
       await message.channel.send(confirmationMessage)
     }
@@ -513,7 +522,15 @@ async function assignDonorRoles(member, newTotal, oldTotal) {
       // Send congratulations message
       const channel = member.guild.channels.cache.find(ch => ch.name.includes('general') || ch.name.includes('chat'))
       if (channel) {
-        const congratsMessage = `🎉 Congratulations **${member.user.username}**! You've earned the **${newRole.name}** role for donating $${newTotal.toFixed(2)}! 🎉`
+        const congratsMessage = `🎊 **ROLE UPGRADE!** 🎊
+
+Congratulations <@${member.user.id}>! 
+
+🎭 **New Role:** ${newRole.name}
+💰 **Total Donated:** $${newTotal.toFixed(2)}
+⭐ **Achievement Unlocked!**
+
+Thank you for your continued support! 🙏✨`
         await channel.send(congratsMessage)
       }
     } else if (currentRole && newRole && currentRoleValue > newRoleValue) {
@@ -577,7 +594,14 @@ async function checkAndAssignAchievements(member, userData, db) {
       const channel = member.guild.channels.cache.find(ch => ch.name.includes('general') || ch.name.includes('chat'))
       if (channel) {
         for (const achievement of newAchievements) {
-          const achievementMessage = `🏆 **${member.user.username}** earned the **${achievement.name}** achievement!\n*${achievement.description}*`
+          const achievementMessage = `🏆 **ACHIEVEMENT UNLOCKED!** 🏆
+
+<@${member.user.id}> just earned:
+
+🎖️ **${achievement.name}**
+📝 *${achievement.description}*
+
+Congratulations! 🎉✨`
           await channel.send(achievementMessage)
         }
       }
