@@ -1150,8 +1150,11 @@ async function handleFixAchievements(interaction, db) {
       }
     } else {
       // Fix all users
+      logger.debug(`🔍 Total users in database: ${Object.keys(db.users).length}`)
       for (const [userId, userData] of Object.entries(db.users)) {
+        logger.debug(`🔍 Checking user ${userId}: totalDonated=${userData.totalDonated}`)
         if (userData.totalDonated > 0) {
+          logger.debug(`🔍 Processing user ${userId} with $${userData.totalDonated} donated`)
           const fixed = await fixUserAchievements(interaction.guild, db, userId, ACHIEVEMENTS)
           fixedCount += fixed
           usersProcessed++

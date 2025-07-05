@@ -320,6 +320,7 @@ async function extractPriceFromTipMessage(content, amount) {
 // Get crypto price from multiple APIs with fallback
 async function getCryptoPrice(symbol, amount) {
   const apis = [
+    { name: 'Aegisum', func: fetchAegisumPrice },
     { name: 'CoinGecko', func: fetchCoinGeckoPrice },
     { name: 'CoinPaprika', func: fetchCoinPaprikaPrice },
     { name: 'CoinMarketCap', func: fetchCoinMarketCapPrice }
@@ -340,6 +341,21 @@ async function getCryptoPrice(symbol, amount) {
 
   logger.warn(`❌ Could not fetch price for ${symbol} from any API`)
   return null
+}
+
+// Aegisum API (Official AEGS price)
+async function fetchAegisumPrice(symbol) {
+  if (symbol.toLowerCase() !== 'aegs') return null
+  
+  const response = await fetch(
+    'https://aegisum.com/api/coins/aegs/',
+    { timeout: 5000 }
+  )
+  
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  
+  const data = await response.json()
+  return data.price || null
 }
 
 // CoinGecko API (Free)
