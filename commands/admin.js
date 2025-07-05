@@ -1183,15 +1183,21 @@ async function fixUserAchievements(guild, db, userId, ACHIEVEMENTS) {
   
   let fixedCount = 0
   
+  logger.debug(`🔍 Checking achievements for user ${userId}: totalDonated=${userData.totalDonated}, existing achievements=${userData.achievements.length}`)
+  
   for (const [key, achievement] of Object.entries(ACHIEVEMENTS)) {
     // Skip if already earned
-    if (userData.achievements.includes(key)) continue
+    if (userData.achievements.includes(key)) {
+      logger.debug(`🔍 User ${userId} already has achievement: ${key}`)
+      continue
+    }
     
     let earned = false
     
     switch (key) {
       case 'first_steps':
         earned = userData.totalDonated > 0
+        logger.debug(`🔍 First Steps check for ${userId}: totalDonated=${userData.totalDonated}, earned=${earned}`)
         break
       case 'generous_donor':
         earned = userData.totalDonated >= 100

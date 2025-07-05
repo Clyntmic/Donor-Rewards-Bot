@@ -31,8 +31,8 @@ async function handleTipccDonation(message) {
     let match = null
     let sender, amount, currency, recipient
 
-    // Pattern 1: Actual tip.cc format - <:LTC:123> <@!123> sent <@123> **amount CURRENCY** (≈ $price).
-    const tipRegex1 = /<:[A-Z]+:\d+>\s*<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*\*\*([\d.]+)\s*([A-Z]+)\*\*\s*\(≈\s*\$[\d.]+\)\./i
+    // Pattern 1: Actual tip.cc format - <:LTC:123> or <a:USDT:123> <@!123> sent <@123> **amount CURRENCY** (≈ $price).
+    const tipRegex1 = /<a?:[A-Z]+:\d+>\s*<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*\*\*([\d.]+)\s*([A-Z]+)\*\*(?:\s*\(≈\s*\$[\d.]+\))?\./i
     match = message.content.match(tipRegex1)
     
     if (match) {
@@ -220,6 +220,7 @@ async function handleTipccDonation(message) {
     // Process entries for eligible draws
     logger.info("🎯 Adding entries to eligible draws")
     let entriesAdded = 0
+    let enteredDraws = []
     
     // Check if user has selected a specific draw
     const selectedDrawId = db.users[senderId].selectedDraw
@@ -256,6 +257,7 @@ async function handleTipccDonation(message) {
       draw.entries[senderId] += entriesToAdd
       db.users[senderId].entries[drawId] += entriesToAdd
       entriesAdded += entriesToAdd
+      enteredDraws.push({ name: draw.name, entries: entriesToAdd })
       
       logger.info(`🎯 Added ${entriesToAdd} entries to draw: ${draw.name}`)
     }
@@ -266,16 +268,22 @@ async function handleTipccDonation(message) {
 
     // Send enhanced confirmation message
     if (entriesAdded > 0) {
+      // Create draw list
+      const drawList = enteredDraws.map(draw => `• **${draw.name}**: ${draw.entries} entries`).join('\n')
+      
       // Create a beautiful confirmation message with user mention
       const confirmationMessage = `🎉 **Thank you for your donation!** 🎉
 
 <@${senderMember.user.id}> just donated **$${usdValue.toFixed(2)}** and received **${entriesAdded}** draw entries!
 
-🎫 **Total Entries:** ${entriesAdded}
+🎫 **Entries Added:**
+${drawList}
+
 💰 **Donation Amount:** $${usdValue.toFixed(2)}
 🏆 **Total Donated:** $${db.users[senderId].totalDonated.toFixed(2)}
 
-Use \`/user entries\` to see all your entries across draws!
+📋 Use \`/user entries\` to see all your entries across draws!
+🎯 Use \`/user select_draw\` to choose a different draw for your next donation!
 
 *Thank you for supporting our community!* ❤️`
 
