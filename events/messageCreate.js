@@ -27,32 +27,51 @@ async function handleTipccDonation(message) {
     let match = null
     let sender, amount, currency, recipient
 
-    // Pattern 1: Custom emoji format - <a:USDT:123> <@!123> sent <@123> 0.1000 USDT (≈ $0.10).
-    const tipRegex1 = /<[a:]*\w+:\d+>\s*<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*([\d.]+)\s*(\w+)/i
+    // Pattern 1: Standard tip.cc format - 💰 @username sent @recipient amount CURRENCY (≈ $price).
+    const tipRegex1 = /💰\s*@(\w+)\s*sent\s*@(\w+)\s*([\d.]+)\s*(\w+)\s*\(≈\s*\$[\d.]+\)\./i
     match = message.content.match(tipRegex1)
     
     if (match) {
-      sender = match[1] // sender user ID
-      recipient = match[2] // recipient user ID  
+      sender = match[1] // sender username
+      recipient = match[2] // recipient username
       amount = match[3]
       currency = match[4]
+      logger.debug(`🔍 Matched Pattern 1: ${sender} -> ${recipient}, ${amount} ${currency}`)
     }
 
     if (!match) {
-      // Pattern 2: Username format - username sent amount currency to recipient
-      const tipRegex2 = /(\w+)\s*sent\s*([\d.]+)\s*(\w+)\s*to\s*(\w+)/i
+      // Pattern 2: Alternative format without emoji - @username sent @recipient amount CURRENCY (≈ $price).
+      const tipRegex2 = /@(\w+)\s*sent\s*@(\w+)\s*([\d.]+)\s*(\w+)\s*\(≈\s*\$[\d.]+\)\./i
       match = message.content.match(tipRegex2)
       if (match) {
-        [, sender, amount, currency, recipient] = match
+        sender = match[1]
+        recipient = match[2]
+        amount = match[3]
+        currency = match[4]
+        logger.debug(`🔍 Matched Pattern 2: ${sender} -> ${recipient}, ${amount} ${currency}`)
       }
     }
 
     if (!match) {
-      // Pattern 3: Standard tip.cc format with bold
-      const tipRegex3 = /💰\s*\*\*(.+?)\*\*\s*sent\s*\*\*(.+?)\s*(.+?)\*\*\s*to\s*\*\*(.+?)\*\*/i
+      // Pattern 3: Custom emoji format - <a:USDT:123> <@!123> sent <@123> 0.1000 USDT (≈ $0.10).
+      const tipRegex3 = /<[a:]*\w+:\d+>\s*<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*([\d.]+)\s*(\w+)/i
       match = message.content.match(tipRegex3)
       if (match) {
+        sender = match[1] // sender user ID
+        recipient = match[2] // recipient user ID  
+        amount = match[3]
+        currency = match[4]
+        logger.debug(`🔍 Matched Pattern 3: ${sender} -> ${recipient}, ${amount} ${currency}`)
+      }
+    }
+
+    if (!match) {
+      // Pattern 4: Simple format - username sent amount currency to recipient
+      const tipRegex4 = /(\w+)\s*sent\s*([\d.]+)\s*(\w+)\s*to\s*(\w+)/i
+      match = message.content.match(tipRegex4)
+      if (match) {
         [, sender, amount, currency, recipient] = match
+        logger.debug(`🔍 Matched Pattern 4: ${sender} -> ${recipient}, ${amount} ${currency}`)
       }
     }
 
@@ -269,47 +288,80 @@ async function extractPriceFromTipMessage(content, amount) {
   }
 }
 
-// Get crypto price from CoinGecko API
+// Get crypto price from multiple APIs with fallback
 async function getCryptoPrice(symbol, amount) {
-  try {
-    // Try CoinGecko first (free API)
-    const response = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${getCoinGeckoId(symbol)}&vs_currencies=usd`
-    )
-    
-    if (response.ok) {
-      const data = await response.json()
-      const coinId = getCoinGeckoId(symbol)
-      const price = data[coinId]?.usd
-      
-      if (price) {
+  const apis = [
+    { name: 'CoinGecko', func: fetchCoinGeckoPrice },
+    { name: 'CoinPaprika', func: fetchCoinPaprikaPrice },
+    { name: 'CoinMarketCap', func: fetchCoinMarketCapPrice }
+  ]
+
+  for (const api of apis) {
+    try {
+      const price = await api.func(symbol)
+      if (price && price > 0) {
         const totalValue = price * amount
-        logger.info(`🔍 CoinGecko price for ${symbol}: $${price}`)
+        logger.info(`🔍 ${api.name} price for ${symbol}: $${price} (Total: $${totalValue.toFixed(4)})`)
         return totalValue
       }
+    } catch (error) {
+      logger.debug(`${api.name} failed for ${symbol}:`, error.message)
     }
-
-    // Fallback to CoinMarketCap if available
-    const apiKey = process.env.COINMARKETCAP_API_KEY
-    if (!apiKey) return null
-
-    const cmcResponse = await fetch(
-      `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${symbol.toUpperCase()}`,
-      {
-        headers: {
-          "X-CMC_PRO_API_KEY": apiKey,
-        },
-      },
-    )
-
-    const cmcData = await cmcResponse.json()
-    const price = cmcData.data?.[symbol.toUpperCase()]?.quote?.USD?.price
-
-    return price ? price * amount : null
-  } catch (error) {
-    logger.error(`Error fetching price for ${symbol}:`, error)
-    return null
   }
+
+  logger.warn(`❌ Could not fetch price for ${symbol} from any API`)
+  return null
+}
+
+// CoinGecko API (Free)
+async function fetchCoinGeckoPrice(symbol) {
+  const coinId = getCoinGeckoId(symbol)
+  if (!coinId) return null
+
+  const response = await fetch(
+    `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`,
+    { timeout: 5000 }
+  )
+  
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  
+  const data = await response.json()
+  return data[coinId]?.usd || null
+}
+
+// CoinPaprika API (Free)
+async function fetchCoinPaprikaPrice(symbol) {
+  const coinId = getCoinPaprikaId(symbol)
+  if (!coinId) return null
+
+  const response = await fetch(
+    `https://api.coinpaprika.com/v1/tickers/${coinId}`,
+    { timeout: 5000 }
+  )
+  
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  
+  const data = await response.json()
+  return data.quotes?.USD?.price || null
+}
+
+// CoinMarketCap API (Requires API key)
+async function fetchCoinMarketCapPrice(symbol) {
+  const apiKey = process.env.COINMARKETCAP_API_KEY
+  if (!apiKey) throw new Error('No API key')
+
+  const response = await fetch(
+    `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${symbol.toUpperCase()}`,
+    {
+      headers: { "X-CMC_PRO_API_KEY": apiKey },
+      timeout: 5000
+    }
+  )
+
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  
+  const data = await response.json()
+  return data.data?.[symbol.toUpperCase()]?.quote?.USD?.price || null
 }
 
 // Map crypto symbols to CoinGecko IDs
@@ -333,6 +385,29 @@ function getCoinGeckoId(symbol) {
   }
   
   return mapping[symbol.toUpperCase()] || symbol.toLowerCase()
+}
+
+// Map crypto symbols to CoinPaprika IDs
+function getCoinPaprikaId(symbol) {
+  const mapping = {
+    'BTC': 'btc-bitcoin',
+    'ETH': 'eth-ethereum',
+    'LTC': 'ltc-litecoin',
+    'SOL': 'sol-solana',
+    'USDT': 'usdt-tether',
+    'USDC': 'usdc-usd-coin',
+    'XRP': 'xrp-xrp',
+    'DOGE': 'doge-dogecoin',
+    'SHIB': 'shib-shiba-inu',
+    'BNB': 'bnb-binance-coin',
+    'ADA': 'ada-cardano',
+    'AVAX': 'avax-avalanche',
+    'TON': 'ton-the-open-network',
+    'TRX': 'trx-tron',
+    'TRON': 'trx-tron'
+  }
+  
+  return mapping[symbol.toUpperCase()] || null
 }
 
 // Update donation streak

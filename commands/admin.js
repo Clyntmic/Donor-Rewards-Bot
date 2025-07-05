@@ -161,6 +161,26 @@ export const data = new SlashCommandBuilder()
         option.setName("enabled").setDescription("Enable or disable the feature").setRequired(false),
       ),
   )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("cryptocurrencies")
+      .setDescription("Manage accepted cryptocurrencies")
+      .addStringOption((option) =>
+        option
+          .setName("action")
+          .setDescription("Action to perform")
+          .setRequired(true)
+          .addChoices(
+            { name: "List", value: "list" },
+            { name: "Add", value: "add" },
+            { name: "Remove", value: "remove" },
+            { name: "Reset to Default", value: "reset" },
+          ),
+      )
+      .addStringOption((option) =>
+        option.setName("currency").setDescription("Currency symbol (e.g., BTC, ETH)").setRequired(false),
+      ),
+  )
 
 export async function execute(interaction) {
   try {
@@ -215,6 +235,9 @@ export async function execute(interaction) {
         break
       case "features":
         await handleFeatures(interaction, db)
+        break
+      case "cryptocurrencies":
+        await handleCryptocurrencies(interaction, db)
         break
       default:
         await handleDashboard(interaction, db)
@@ -944,6 +967,119 @@ function getFeatureName(key) {
     automatedDraws: "Automated Draws",
   }
   return names[key] || key
+}
+
+async function handleCryptocurrencies(interaction, db) {
+  const action = interaction.options.getString("action")
+  const currency = interaction.options.getString("currency")?.toUpperCase()
+
+  // Initialize accepted cryptocurrencies if not exists
+  if (!db.config) db.config = {}
+  if (!db.config.acceptedCryptocurrencies) {
+    db.config.acceptedCryptocurrencies = [...CONFIG.DEFAULT_ACCEPTED_CRYPTOCURRENCIES]
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(db.config?.theme?.info || "#00BCD4")
+    .setFooter({ text: "Powered By Aegisum Eco System" })
+
+  switch (action) {
+    case "list":
+      embed
+        .setTitle("💰 Accepted Cryptocurrencies")
+        .setDescription("Currently accepted cryptocurrencies for donations:")
+        .addFields({
+          name: "📋 Accepted Coins",
+          value: db.config.acceptedCryptocurrencies.join(", ") || "None configured",
+          inline: false,
+        })
+        .addFields({
+          name: "📊 Total Count",
+          value: `${db.config.acceptedCryptocurrencies.length} currencies`,
+          inline: true,
+        })
+      break
+
+    case "add":
+      if (!currency) {
+        return interaction.reply({
+          content: "❌ Please specify a currency symbol to add.",
+          flags: MessageFlags.Ephemeral,
+        })
+      }
+
+      if (db.config.acceptedCryptocurrencies.includes(currency)) {
+        return interaction.reply({
+          content: `❌ ${currency} is already in the accepted list.`,
+          flags: MessageFlags.Ephemeral,
+        })
+      }
+
+      db.config.acceptedCryptocurrencies.push(currency)
+      saveDatabase(interaction.guildId, db)
+
+      embed
+        .setTitle("✅ Currency Added")
+        .setDescription(`${currency} has been added to the accepted cryptocurrencies list.`)
+        .addFields({
+          name: "📋 Updated List",
+          value: db.config.acceptedCryptocurrencies.join(", "),
+          inline: false,
+        })
+      break
+
+    case "remove":
+      if (!currency) {
+        return interaction.reply({
+          content: "❌ Please specify a currency symbol to remove.",
+          flags: MessageFlags.Ephemeral,
+        })
+      }
+
+      const index = db.config.acceptedCryptocurrencies.indexOf(currency)
+      if (index === -1) {
+        return interaction.reply({
+          content: `❌ ${currency} is not in the accepted list.`,
+          flags: MessageFlags.Ephemeral,
+        })
+      }
+
+      db.config.acceptedCryptocurrencies.splice(index, 1)
+      saveDatabase(interaction.guildId, db)
+
+      embed
+        .setTitle("🗑️ Currency Removed")
+        .setDescription(`${currency} has been removed from the accepted cryptocurrencies list.`)
+        .addFields({
+          name: "📋 Updated List",
+          value: db.config.acceptedCryptocurrencies.join(", ") || "None",
+          inline: false,
+        })
+      break
+
+    case "reset":
+      db.config.acceptedCryptocurrencies = [...CONFIG.DEFAULT_ACCEPTED_CRYPTOCURRENCIES]
+      saveDatabase(interaction.guildId, db)
+
+      embed
+        .setTitle("🔄 Reset to Default")
+        .setDescription("Accepted cryptocurrencies have been reset to the default list.")
+        .addFields({
+          name: "📋 Default List",
+          value: db.config.acceptedCryptocurrencies.join(", "),
+          inline: false,
+        })
+      break
+
+    default:
+      return interaction.reply({
+        content: "❌ Invalid action specified.",
+        flags: MessageFlags.Ephemeral,
+      })
+  }
+
+  await interaction.reply({ embeds: [embed] })
+  logger.info(`Cryptocurrency management: ${action} ${currency || ""} by ${interaction.user.tag}`)
 }
 
 async function checkAdminPermissions(interaction, db) {
