@@ -40,6 +40,26 @@ export const data = new SlashCommandBuilder()
         option.setName("draw_id").setDescription("Draw ID to select (use 'auto' for automatic)").setRequired(false)
       )
   )
+  .addSubcommand(subcommand =>
+    subcommand
+      .setName("privacy")
+      .setDescription("Manage your privacy settings")
+      .addStringOption(option =>
+        option
+          .setName("setting")
+          .setDescription("Privacy setting to change")
+          .setRequired(true)
+          .addChoices(
+            { name: "Hide Profile", value: "hide_profile" },
+            { name: "Hide Donations", value: "hide_donations" },
+            { name: "Hide Achievements", value: "hide_achievements" },
+            { name: "View Settings", value: "view" }
+          )
+      )
+      .addBooleanOption(option =>
+        option.setName("enabled").setDescription("Enable or disable this privacy setting").setRequired(false)
+      )
+  )
 
 export async function execute(interaction) {
   try {
@@ -62,6 +82,9 @@ export async function execute(interaction) {
         break
       case "select_draw":
         await handleSelectDraw(interaction, db)
+        break
+      case "privacy":
+        await handlePrivacy(interaction, db)
         break
       default:
         await interaction.reply({
@@ -339,4 +362,91 @@ async function handleSelectDraw(interaction, db) {
   saveDatabase(interaction.guildId, db)
   
   logger.info(`User command executed: ${interaction.options.getSubcommand()} by ${interaction.user.tag}`)
+}
+
+// Handle privacy settings
+async function handlePrivacy(interaction, db) {
+  const userId = interaction.user.id
+  const setting = interaction.options.getString("setting")
+  const enabled = interaction.options.getBoolean("enabled")
+
+  // Initialize user privacy settings if they don't exist
+  if (!db.users[userId]) {
+    db.users[userId] = { donations: [], totalDonated: 0, entries: {}, privacy: {} }
+  }
+  if (!db.users[userId].privacy) {
+    db.users[userId].privacy = {}
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(CONFIG.DEFAULT_THEME.colors.primary)
+    .setTitle("🔒 Privacy Settings")
+
+  if (setting === "view") {
+    // Show current privacy settings
+    const privacy = db.users[userId].privacy
+    embed
+      .setDescription("Your current privacy settings:")
+      .addFields(
+        {
+          name: "👤 Hide Profile",
+          value: privacy.hide_profile ? "🔒 Enabled" : "🔓 Disabled",
+          inline: true,
+        },
+        {
+          name: "💰 Hide Donations",
+          value: privacy.hide_donations ? "🔒 Enabled" : "🔓 Disabled",
+          inline: true,
+        },
+        {
+          name: "🏆 Hide Achievements",
+          value: privacy.hide_achievements ? "🔒 Enabled" : "🔓 Disabled",
+          inline: true,
+        }
+      )
+      .addFields({
+        name: "📝 How to Change",
+        value: "Use `/user privacy setting:SETTING enabled:true/false` to change settings.",
+        inline: false,
+      })
+  } else {
+    if (enabled === null) {
+      await interaction.reply({
+        content: "❌ Please specify whether to enable or disable this setting.",
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    // Update the setting
+    db.users[userId].privacy[setting] = enabled
+    
+    const settingNames = {
+      hide_profile: "Hide Profile",
+      hide_donations: "Hide Donations", 
+      hide_achievements: "Hide Achievements"
+    }
+
+    embed
+      .setDescription(`Privacy setting updated successfully!`)
+      .addFields({
+        name: "⚙️ Setting",
+        value: settingNames[setting],
+        inline: true,
+      }, {
+        name: "🔧 Status",
+        value: enabled ? "🔒 Enabled" : "🔓 Disabled",
+        inline: true,
+      })
+      .addFields({
+        name: "📝 What This Means",
+        value: enabled 
+          ? "Other users cannot view this information about you."
+          : "Other users can view this information about you.",
+        inline: false,
+      })
+  }
+
+  embed.setFooter({ text: "Powered By Aegisum Eco System" })
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
 }

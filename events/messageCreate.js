@@ -31,41 +31,41 @@ async function handleTipccDonation(message) {
     let match = null
     let sender, amount, currency, recipient
 
-    // Pattern 1: Standard tip.cc format - 💰 @username sent @recipient amount CURRENCY (≈ $price).
-    const tipRegex1 = /💰\s*@(\w+)\s*sent\s*@(\w+)\s*([\d.]+)\s*(\w+)\s*\(≈\s*\$[\d.]+\)\./i
+    // Pattern 1: Actual tip.cc format - <:LTC:123> <@!123> sent <@123> **amount CURRENCY** (≈ $price).
+    const tipRegex1 = /<:[A-Z]+:\d+>\s*<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*\*\*([\d.]+)\s*([A-Z]+)\*\*\s*\(≈\s*\$[\d.]+\)\./i
     match = message.content.match(tipRegex1)
     
     if (match) {
-      sender = match[1] // sender username
-      recipient = match[2] // recipient username
+      sender = match[1] // sender user ID
+      recipient = match[2] // recipient user ID
       amount = match[3]
       currency = match[4]
-      logger.debug(`🔍 Matched Pattern 1: ${sender} -> ${recipient}, ${amount} ${currency}`)
+      logger.debug(`🔍 Matched Pattern 1 (Custom Emoji): ${sender} -> ${recipient}, ${amount} ${currency}`)
     }
 
     if (!match) {
-      // Pattern 2: Alternative format without emoji - @username sent @recipient amount CURRENCY (≈ $price).
-      const tipRegex2 = /@(\w+)\s*sent\s*@(\w+)\s*([\d.]+)\s*(\w+)\s*\(≈\s*\$[\d.]+\)\./i
+      // Pattern 2: Alternative format - 💰 @username sent @recipient amount CURRENCY (≈ $price).
+      const tipRegex2 = /💰\s*@(\w+)\s*sent\s*@(\w+)\s*([\d.]+)\s*(\w+)\s*\(≈\s*\$[\d.]+\)\./i
       match = message.content.match(tipRegex2)
       if (match) {
-        sender = match[1]
-        recipient = match[2]
+        sender = match[1] // sender username
+        recipient = match[2] // recipient username
         amount = match[3]
         currency = match[4]
-        logger.debug(`🔍 Matched Pattern 2: ${sender} -> ${recipient}, ${amount} ${currency}`)
+        logger.debug(`🔍 Matched Pattern 2 (Username): ${sender} -> ${recipient}, ${amount} ${currency}`)
       }
     }
 
     if (!match) {
-      // Pattern 3: Custom emoji format - <a:USDT:123> <@!123> sent <@123> 0.1000 USDT (≈ $0.10).
-      const tipRegex3 = /<[a:]*\w+:\d+>\s*<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*([\d.]+)\s*(\w+)/i
+      // Pattern 3: Simple format - <@!123> sent <@123> amount CURRENCY (≈ $price).
+      const tipRegex3 = /<@!?(\d+)>\s*sent\s*<@!?(\d+)>\s*([\d.]+)\s*(\w+)\s*\(≈\s*\$[\d.]+\)\./i
       match = message.content.match(tipRegex3)
       if (match) {
         sender = match[1] // sender user ID
         recipient = match[2] // recipient user ID  
         amount = match[3]
         currency = match[4]
-        logger.debug(`🔍 Matched Pattern 3: ${sender} -> ${recipient}, ${amount} ${currency}`)
+        logger.debug(`🔍 Matched Pattern 3 (User IDs): ${sender} -> ${recipient}, ${amount} ${currency}`)
       }
     }
 
@@ -209,6 +209,9 @@ async function handleTipccDonation(message) {
 
     // Check and assign donor roles
     await assignDonorRoles(senderMember, db.users[senderId].totalDonated, oldTotal)
+    
+    // Check and assign achievements
+    await checkAndAssignAchievements(senderMember, db.users[senderId], db)
 
     // Process entries for eligible draws
     logger.info("🎯 Adding entries to eligible draws")
@@ -455,21 +458,34 @@ async function assignDonorRoles(member, newTotal, oldTotal) {
   try {
     const donorRoles = CONFIG.DONOR_ROLES
     
-    // Find the appropriate role for the new total
-    let newRole = null
-    let oldRole = null
+    // Find current role the user has (check actual Discord roles)
+    let currentRole = null
+    let currentRoleValue = 0
     
     for (const [key, role] of Object.entries(donorRoles)) {
-      if (newTotal >= role.minAmount && (!role.maxAmount || newTotal <= role.maxAmount)) {
-        newRole = role
-      }
-      if (oldTotal >= role.minAmount && (!role.maxAmount || oldTotal <= role.maxAmount)) {
-        oldRole = role
+      if (member.roles.cache.has(role.id)) {
+        if (role.minAmount > currentRoleValue) {
+          currentRole = role
+          currentRoleValue = role.minAmount
+        }
       }
     }
     
-    // If role changed, update it
-    if (newRole && newRole !== oldRole) {
+    // Find the appropriate role for the new total
+    let newRole = null
+    let newRoleValue = 0
+    
+    for (const [key, role] of Object.entries(donorRoles)) {
+      if (newTotal >= role.minAmount && (!role.maxAmount || newTotal <= role.maxAmount)) {
+        if (role.minAmount > newRoleValue) {
+          newRole = role
+          newRoleValue = role.minAmount
+        }
+      }
+    }
+    
+    // Only update if the new role is higher than current role
+    if (newRole && (!currentRole || newRoleValue > currentRoleValue)) {
       // Remove old donor roles
       for (const role of Object.values(donorRoles)) {
         if (member.roles.cache.has(role.id)) {
@@ -488,8 +504,73 @@ async function assignDonorRoles(member, newTotal, oldTotal) {
         const congratsMessage = `🎉 Congratulations **${member.user.username}**! You've earned the **${newRole.name}** role for donating $${newTotal.toFixed(2)}! 🎉`
         await channel.send(congratsMessage)
       }
+    } else if (currentRole && newRole && currentRoleValue > newRoleValue) {
+      logger.info(`🎭 User ${member.user.username} already has higher role ${currentRole.name}, not downgrading`)
     }
   } catch (error) {
     logger.error("Error assigning donor roles:", error)
+  }
+}
+
+// Check and assign achievements
+async function checkAndAssignAchievements(member, userData, db) {
+  try {
+    if (!userData.achievements) userData.achievements = []
+    
+    const achievements = ACHIEVEMENTS
+    let newAchievements = []
+    
+    for (const [key, achievement] of Object.entries(achievements)) {
+      // Skip if already earned
+      if (userData.achievements.includes(key)) continue
+      
+      let earned = false
+      
+      switch (key) {
+        case 'first_steps':
+          earned = userData.totalDonated > 0
+          break
+        case 'generous_donor':
+          earned = userData.totalDonated >= 100
+          break
+        case 'big_spender':
+          earned = userData.totalDonated >= 500
+          break
+        case 'whale':
+          earned = userData.totalDonated >= 1000
+          break
+        case 'streak_master':
+          earned = userData.streaks?.current >= 7
+          break
+        case 'community_pillar':
+          // Check referrals
+          const referralCount = Object.values(db.users).filter(user => user.referredBy === member.user.id).length
+          earned = referralCount >= 3
+          break
+        case 'lucky_winner':
+          // Check if user has won any draws
+          earned = userData.wins > 0
+          break
+      }
+      
+      if (earned) {
+        userData.achievements.push(key)
+        newAchievements.push(achievement)
+        logger.info(`🏆 Achievement earned: ${achievement.name} by ${member.user.username}`)
+      }
+    }
+    
+    // Send achievement notifications
+    if (newAchievements.length > 0) {
+      const channel = member.guild.channels.cache.find(ch => ch.name.includes('general') || ch.name.includes('chat'))
+      if (channel) {
+        for (const achievement of newAchievements) {
+          const achievementMessage = `🏆 **${member.user.username}** earned the **${achievement.name}** achievement!\n*${achievement.description}*`
+          await channel.send(achievementMessage)
+        }
+      }
+    }
+  } catch (error) {
+    logger.error("Error checking achievements:", error)
   }
 }
